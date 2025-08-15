@@ -1,0 +1,11 @@
+# created by virtualenv automatically
+runs
+Scripts
+Lib
+.idea
+__pycache__/
+abs_data.npy
+image_data.npy
+new_data.npy
+rel_data.npy
+pyvenv.cfg
