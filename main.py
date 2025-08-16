@@ -1,6 +1,9 @@
 import os
 import random
 
+from pynput.mouse import Controller
+import keyboard
+
 import torch
 
 import cv2
@@ -8,11 +11,9 @@ import torchvision
 from torch import nn, optim
 import dxcam
 
-import windowcapture
-from time import time
+import time
 
 import pyautogui
-import pydirectinput
 import keyboard
 import cv2 as cv
 import numpy as np
@@ -21,7 +22,6 @@ from dataset import SCREEN_WIDTH, SCREEN_HEIGHT
 from train_data import num_classes, device, learning_rate, load_checkpoint
 from windowcapture import WindowCapture
 from torchvision import transforms
-from windowcapture2 import get_window
 
 image_file = "image_data.npy"
 abs_file = "abs_data.npy"
@@ -39,13 +39,9 @@ def get_data(image_data, abs_data, rel_data, screenshot):
         rel_x = abs_x - abs_data[-1][0]
         rel_y = abs_y - abs_data[-1][1]
 
-
-
     image_data.append(screenshot)
     abs_data.append((abs_x, abs_y))
     rel_data.append((rel_x, rel_y))
-
-
 
     if len(image_data) % 500 == 0:
         np.save(image_file, image_data)
@@ -54,13 +50,11 @@ def get_data(image_data, abs_data, rel_data, screenshot):
         print("data saved")
 
 
-
 if __name__ == '__main__':
 
     wincap = WindowCapture("osu!")
 
-    loop_time = time()
-
+    loop_time = time.time()
 
     # if os.path.isfile(image_file):
     #     print("File found")
@@ -91,60 +85,66 @@ if __name__ == '__main__':
     model.eval()
 
     camera = dxcam.create()
-    camera.start(target_fps=0, video_mode=True)
+    camera.start(video_mode=True, region=wincap.region)
+
+    mouse = Controller()
+
+    paused = True
+    debug = True
 
     while True:
 
-        # screenshot = wincap.get_screenshot()
+        if keyboard.is_pressed("esc"):
+            paused = True
 
-        screenshot = camera.get_latest_frame()
+        if keyboard.is_pressed("p"):
+            paused = False
 
+        if paused:
+            time.sleep(0.5)
 
-        if screenshot is not None:
-            screenshot = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
+        else:
+            screenshot = camera.get_latest_frame()
 
-            cv.imshow("test", screenshot)
+            if screenshot is not None:
+                screenshot = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
 
-            # 256 x 144 images
-            screenshot = cv2.resize(screenshot, (256, 144), interpolation=cv2.INTER_AREA)
+                # cv.imshow("test", screenshot)
 
-            # get_data(image_data, abs_data, rel_data)
+                # 256 x 144 images
+                screenshot = cv2.resize(screenshot, (256, 144), interpolation=cv2.INTER_AREA)
 
-            tensor_image = transform(screenshot)
+                # get_data(image_data, abs_data, rel_data)
 
-            tensor_image = tensor_image.reshape((1,) + tensor_image.shape)
+                tensor_image = transform(screenshot)
 
-            prediction = model(tensor_image.to(device))
+                tensor_image = tensor_image.reshape((1,) + tensor_image.shape)
 
-            test = prediction.tolist()
+                prediction = model(tensor_image.to(device))
 
-            # Returns width, height
+                test = prediction.tolist()
 
-            (x, y) = test[0]
+                # Returns width, height
 
-            # print("Prediction: ", x, y)
+                (x, y) = test[0]
 
-            x *= SCREEN_WIDTH
-            y *= SCREEN_HEIGHT
+                # print("Prediction: ", x, y)
 
-            pyautogui.moveTo(x, y)
+                x *= SCREEN_WIDTH
+                y *= SCREEN_HEIGHT
 
-            # Show image
-            # cv.imshow('Computer Vision', screenshot)
+                # move mouse to predicted coordinates
 
+                mouse.position = (x, y)
 
+                if debug:
+                    # debug the loop rate
+                    print('FPS {}'.format(1 / (time.time() - loop_time)))
 
-            # debug the loop rate
-            print('FPS {}'.format(1 / (time() - loop_time)))
+                    loop_time = time.time()
 
-            loop_time = time()
-
-        # press 'q' with the output window focused to exit.
-        # waits 1 ms every loop to process key presses
-
-        if cv.waitKey(1) == ord('q'):
-            cv.destroyAllWindows()
-            break
-
-        if keyboard.is_pressed('p'):
-            break
+            # press 'q' with the output window focused to exit.
+            # waits 1 ms every loop to process key presses
+            if cv.waitKey(1) == ord('q'):
+                cv.destroyAllWindows()
+                break
