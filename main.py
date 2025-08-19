@@ -1,84 +1,84 @@
 import os
-import random
+
+import sys
 
 from pynput.mouse import Controller
-import keyboard
+
 
 import torch
-
-import cv2
-import torchvision
-from torch import nn, optim
+from torch import optim
 import dxcam
 
 import time
 
-import pyautogui
 import keyboard
 import cv2 as cv
 import numpy as np
 
-from dataset import SCREEN_WIDTH, SCREEN_HEIGHT
-from train_data import num_classes, device, learning_rate, load_checkpoint
+from train_data import device, learning_rate, load_checkpoint
 from windowcapture import WindowCapture
 from torchvision import transforms
 
+from OSU_model import OSUModel
+
 image_file = "image_data.npy"
-abs_file = "abs_data.npy"
-rel_file = "rel_data.npy"
+output_file = "normalized_coords.npy"
+
+load_model = 1
+
+model_name = f'osu_model_{load_model}.pth.tar'
+
+gather_data = False
+debug = False
 
 
-def get_data(image_data, abs_data, rel_data, screenshot):
-    # Playing at fullscreen, otherwise use windowcapture.get_screen_position
-    (abs_x, abs_y) = pyautogui.position()
+def get_data(image_data, output_data, screenshot, wincap, step):
 
-    (rel_x, rel_y) = (0, 0)
+    (normalized_x, normalized_y) = wincap.normalize_mouse_pos(mouse.position)
 
-    if abs_data:
-        # Subtract previous position from current position
-        rel_x = abs_x - abs_data[-1][0]
-        rel_y = abs_y - abs_data[-1][1]
+    if 0 <= normalized_x <= 1 and 0 <= normalized_y <= 1:
 
-    image_data.append(screenshot)
-    abs_data.append((abs_x, abs_y))
-    rel_data.append((rel_x, rel_y))
+        if step != 0:
+            # Output of previous image should be current mouse coordinates
+            output_data[-1] = (normalized_x, normalized_y)
 
-    if len(image_data) % 500 == 0:
-        np.save(image_file, image_data)
-        np.save(abs_file, abs_data)
-        np.save(rel_file, rel_data)
-        print("data saved")
+        image_data.append(screenshot)
+        # Will be updated in next frame, remove samples if coords are -1, -1
+        output_data.append((-1, -1))
+
+        if len(image_data) % 500 == 0:
+            np.save(image_file, image_data)
+            np.save(output_file, output_data)
+            print("data saved")
+
+    else:
+        sys.exit()
 
 
 if __name__ == '__main__':
 
     wincap = WindowCapture("osu!")
 
+    step = 0
+
     loop_time = time.time()
 
-    # if os.path.isfile(image_file):
-    #     print("File found")
-    #     image_data = list(np.load(image_file))
-    #     abs_data = list(np.load(abs_file))
-    #     rel_data = list(np.load(rel_file))
-    # else:
-    #     print("File not found")
-    #     image_data = []
-    #     abs_data = []
-    #     rel_data = []
+    if os.path.isfile(image_file):
+        print("File found")
+        image_data = list(np.load(image_file))
+        output_data = list(np.load(output_file))
+    else:
+        print("File not found")
+        image_data = []
+        output_data = []
 
-    model = torchvision.models.resnet50(weights=True)
-
-    model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3,
-                            bias=False)
-
-    model.fc = nn.Linear(in_features=2048, out_features=num_classes, bias=True)
+    model = OSUModel()
 
     model.to(device)
 
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(model.resnet.parameters(), lr=learning_rate)
 
-    load_checkpoint(model, optimizer, torch.load("my_checkpoint.pth.tar"))
+    load_checkpoint(model, optimizer, torch.load(model_name))
 
     transform = transforms.ToTensor()
 
@@ -90,7 +90,6 @@ if __name__ == '__main__':
     mouse = Controller()
 
     paused = True
-    debug = True
 
     while True:
 
@@ -101,41 +100,47 @@ if __name__ == '__main__':
             paused = False
 
         if paused:
+            # Idle time before unpausing
             time.sleep(0.5)
+            step = 0
+            print("Paused")
 
         else:
             screenshot = camera.get_latest_frame()
 
             if screenshot is not None:
-                screenshot = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
 
-                # cv.imshow("test", screenshot)
+                if debug:
+                    cv.imshow("test", screenshot)
 
-                # 256 x 144 images
-                screenshot = cv2.resize(screenshot, (256, 144), interpolation=cv2.INTER_AREA)
+                # 224 x 224 images
+                screenshot = cv.resize(screenshot, (224, 224), interpolation=cv.INTER_AREA)
 
-                # get_data(image_data, abs_data, rel_data)
+                if gather_data:
+                    get_data(image_data, output_data, screenshot, wincap, step)
+                    step += 1
 
-                tensor_image = transform(screenshot)
+                else:
 
-                tensor_image = tensor_image.reshape((1,) + tensor_image.shape)
+                    tensor_image = transform(screenshot)
 
-                prediction = model(tensor_image.to(device))
+                    tensor_image = tensor_image.reshape((1,) + tensor_image.shape)
 
-                test = prediction.tolist()
+                    prediction = model(tensor_image.to(device))
 
-                # Returns width, height
+                    test = prediction.tolist()
 
-                (x, y) = test[0]
+                    # Returns width, height
 
-                # print("Prediction: ", x, y)
+                    (x, y) = test[0]
 
-                x *= SCREEN_WIDTH
-                y *= SCREEN_HEIGHT
+                    # print("Prediction: ", x, y)
 
-                # move mouse to predicted coordinates
+                    (x, y) = wincap.denormalize_mouse_pos((x, y))
 
-                mouse.position = (x, y)
+                    # move mouse to predicted coordinates
+
+                    mouse.position = (x, y)
 
                 if debug:
                     # debug the loop rate
