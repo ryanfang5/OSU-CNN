@@ -1,44 +1,30 @@
 import numpy as np
 
-
-image_file = "image_data.npy"
-abs_file = "abs_data.npy"
-rel_file = "rel_data.npy"
-new_file = "new_data.npy"
+from train_data import image_file, output_file
 
 image_data = list(np.load(image_file))
-abs_data = list(np.load(abs_file))
-rel_data = list(np.load(rel_file))
-new_data = list(np.load(new_file))
+output_data = list(np.load(output_file))
 
-rel_counts = {}
+output_counts = {}
 
-for data in rel_data:
+for data in output_data:
 
     test = data.tolist()
 
     test_tuple = (test[0], test[1])
 
-    rel_counts[test_tuple] = rel_counts.get(test_tuple, 0) + 1
+    output_counts[test_tuple] = output_counts.get(test_tuple, 0) + 1
 
-test = []
+    if test_tuple == (-1, -1):
+        print("Found")
 
-for data, count in rel_counts.items():
-    test.append((count, data))
+unique_data = []
 
-test.sort(reverse=True)
+for data, count in output_counts.items():
+    unique_data.append((count, data))
 
-...
+unique_data.sort(reverse=True)
 
-def create_new_data():
-
-    for i in range(len(rel_data)):
-        rel = rel_data[i].tolist()
-        abs = abs_data[i].tolist()
-
-        new = (rel[0]+abs[0], rel[1]+abs[1])
-        new_data.append(new)
-
-
-
-# create_new_data()
+print("Images length: ", len(image_data))
+print("Output length: ", len(output_data))
+print("Unique outputs length: ", len(unique_data))

@@ -3,28 +3,38 @@ from torch.utils.data import Dataset
 
 import numpy as np
 
-SCREEN_WIDTH = 2560
-SCREEN_HEIGHT = 1440
 
-class TestDataset(Dataset):
-    def __init__(self, image_file, new_file, transform=None):
+class OSUDataset(Dataset):
+    def __init__(self, image_file, output_file, transform=None):
+        """
+        Initialize image data, output data and transform
+        :param image_file:
+        :param output_file:
+        :param transform:
+        """
         self.images = np.load(image_file)
-        self.new_data = np.load(new_file)
+        self.output_data = np.load(output_file)
         self.transform = transform
 
     def __len__(self):
+        """
+        return length of samples
+        :return: number of data samples
+        """
         return len(self.images)
 
     def __getitem__(self, index):
+        """
+        Get an image and normalized mouse coordinates for a single index
+        :param index:
+        :return: (image, output) in tensor form
+        """
         image = self.images[index]
 
         if self.transform:
             image = self.transform(image)
 
-        (x, y) = self.new_data[index]
-
-        x /= SCREEN_WIDTH
-        y /= SCREEN_HEIGHT
+        (x, y) = self.output_data[index]
 
         output = torch.tensor((x, y), dtype=torch.float32)
 

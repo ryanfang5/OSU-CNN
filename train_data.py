@@ -7,18 +7,16 @@ import torchvision.transforms as transforms
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-import numpy as np
+from dataset import OSUDataset
 
-from test_data import image_file, abs_file, rel_file, new_file
+from OSU_model import OSUModel, EarlyStopping
 
-from dataset import TestDataset
-
-from OSU_model import OSUModel
+image_file = "image_data.npy"
+output_file = "normalized_coords.npy"
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Hyperparameters
-input_size = 36866
 num_classes = 2
 learning_rate = 0.0001
 fine_tune_lr = 0.00001
@@ -26,14 +24,14 @@ batch_size = 64
 num_epochs = 10
 load_model = True
 
-abs_data = np.load(abs_file)
-image_data = np.load(image_file)
-rel_data = np.load(rel_file)
+run = 1
+logs = 0
 
-writer = SummaryWriter(f'runs/OSU/test4')
+writer = SummaryWriter(f'runs/OSU/{logs}')
+model_name = f'osu_model_{run}.pth.tar'
 
 
-def save_checkpoint(state, filename="my_checkpoint.pth.tar"):
+def save_checkpoint(state, filename=model_name):
     print("Saving Checkpoint")
     torch.save(state, filename)
 
@@ -44,62 +42,14 @@ def load_checkpoint(model, optimizer, checkpoint):
     optimizer.load_state_dict(checkpoint['optimizer'])
 
 
-def check_validation_loss(loader, model, criterion):
-    # Set the model to evaluation mode
-    model.eval()
-    total_loss = 0.0
+def train_model(model, train_loader, val_loader, optimizer, criterion,
+                num_epochs=50, patience=5):
+    early_stopper = EarlyStopping(model, optimizer, patience=patience)
 
-    # We don't need to compute gradients for validation
-    with torch.no_grad():
-        for data, target in loader:
-            data = data.to(device)
-            targets = target.to(device)
-            scores = model(data)
+    step = 0
+    global_step = 0
 
-            loss = criterion(scores, targets)
-            total_loss += loss.item() * data.size(0)
-
-    avg_loss = total_loss / len(loader.dataset)
-    # Set the model back to training mode
-    return avg_loss
-
-
-step = 0
-if __name__ == '__main__':
-
-    # Model
-
-    model = torchvision.models.resnet50(weights=True)
-
-    print(model)
-
-    for param in model.parameters():
-        param.requires_grad = False
-
-    model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3,
-                            bias=False)
-
-    model.fc = nn.Linear(in_features=2048, out_features=num_classes, bias=True)
-
-    model.to(device)
-
-    # Load Data
-
-    dataset = TestDataset(image_file=image_file, new_file=new_file, transform=transforms.ToTensor())
-
-    train_set, test_set = torch.utils.data.random_split(dataset, [30000, 7000])
-
-    train_loader = DataLoader(dataset=train_set, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(dataset=test_set, batch_size=batch_size, shuffle=True)
-
-    criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-
-    if load_model:
-        load_checkpoint(model, optimizer, torch.load("my_checkpoint.pth.tar"))
-
-    for param in model.parameters():
-        param.requires_grad = True
+    print("Training...")
 
     for epoch in range(num_epochs):
 
@@ -108,31 +58,86 @@ if __name__ == '__main__':
         if epoch % 2:
             save_checkpoint(checkpoint)
 
-        for batch_idx, (data, target) in enumerate(train_loader):
-            model.train()
+        model.train()
+        train_loss = 0
+        for data, target in train_loader:
             data = data.to(device)
             targets = target.to(device)
 
+            optimizer.zero_grad()
             scores = model(data)
 
             loss = criterion(scores, targets)
-            img_grid = torchvision.utils.make_grid(data)
-            writer.add_image("osu images", img_grid, global_step=step)
-            writer.add_histogram('fc1', model.fc.weight)
 
-            writer.add_scalar("Training Loss", loss, global_step=step)
+            if step % 1000:
+                img_grid = torchvision.utils.make_grid(data)
+                writer.add_image("osu images", img_grid, global_step=step)
+
             step += 1
 
-            optimizer.zero_grad()
             loss.backward()
 
             optimizer.step()
 
-            print("Loss: ", loss.item())
-            print("Epoch:", epoch)
+            train_loss += loss.item()
 
-        testing_loss = check_validation_loss(test_loader, model, criterion)
-        print("Validation AVG Loss:", testing_loss)
-        writer.add_scalar("Testing Loss", testing_loss, global_step=epoch)
+        # --- Validation ---
+        model.eval()
+        val_loss = 0
+        with torch.no_grad():
+            for data, target in val_loader:
+                data = data.to(device)
+                targets = target.to(device)
+                scores = model(data)
+                loss = criterion(scores, targets)
+                val_loss += loss.item()
+
+        train_loss /= len(train_loader)
+        val_loss /= len(val_loader)
+
+        writer.add_scalar("Training Loss", train_loss, global_step=global_step)
+        writer.add_scalar("Validation Loss", val_loss, global_step=global_step)
+
+        global_step += 1
+
+        print(f"Epoch:", epoch,
+              f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+
+        # Early stopping check
+        early_stopper(val_loss)
+        if early_stopper.early_stop:
+            print("Early stopping triggered.")
+            break
 
     writer.close()
+
+
+if __name__ == '__main__':
+
+    # Model
+
+    model = OSUModel()
+
+    model.to(device)
+
+    # Load Data
+
+    dataset = OSUDataset(image_file=image_file, output_file=output_file, transform=transforms.ToTensor())
+
+    train_set, test_set = torch.utils.data.random_split(dataset, [43500, 4992])
+
+    train_loader = DataLoader(dataset=train_set, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(dataset=test_set, batch_size=batch_size, shuffle=True)
+
+    criterion = nn.MSELoss()
+    optimizer = optim.Adam(model.resnet.parameters(), lr=learning_rate)
+
+    if load_model:
+        load_checkpoint(model, optimizer, torch.load(model_name))
+
+    # optimizer = optim.Adam(model.resnet.parameters(), lr=fine_tune_lr)
+
+    # for param in model.resnet.parameters():
+    #     param.requires_grad = True
+
+    train_model(model, train_loader, test_loader, optimizer, criterion)

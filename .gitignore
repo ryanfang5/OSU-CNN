@@ -4,8 +4,7 @@ Scripts
 Lib
 .idea
 __pycache__/
-abs_data.npy
+normalized_coords.npy
 image_data.npy
-new_data.npy
-rel_data.npy
 pyvenv.cfg
+old_data
